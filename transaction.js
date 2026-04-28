@@ -92,7 +92,7 @@ module.exports = class Transaction {
    *    according to the balances from the specified block.
    */
   sufficientFunds(block) {
-    return this.totalOutput() <= block.balances.get(this.from);
+    return this.totalOutput() <= block.balanceOf(this.from);
   }
 
   /**

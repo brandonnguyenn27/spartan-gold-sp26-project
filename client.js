@@ -6,6 +6,8 @@ let Blockchain = require('./blockchain.js');
 
 let utils = require('./utils.js');
 
+const TicketTransaction = require('./ticket-transaction.js');
+
 /**
  * A client has a public/private keypair and an address.
  * It can send and receive messages on the Blockchain network.
@@ -174,6 +176,54 @@ module.exports = class Client extends EventEmitter {
     this.net.broadcast(Blockchain.POST_TRANSACTION, tx);
 
     return tx;
+  }
+
+  /**
+   * Posts a ticket mint (organizer). Uses the same nonce stream as gold transactions.
+   */
+  mintTicket({ metadata, mintNonce, recipient, fee = 0 }) {
+    const built = TicketTransaction.createMint({
+      from: this.address,
+      nonce: this.nonce,
+      pubKey: this.keyPair.public,
+      metadata,
+      mintNonce,
+      recipient,
+      fee,
+    });
+    const totalPayments = built.outputs.reduce((acc, { amount }) => acc + amount, 0) + built.fee;
+    if (totalPayments > this.availableGold) {
+      throw new Error(`Requested ${totalPayments}, but account only has ${this.availableGold}.`);
+    }
+    return this.postGenericTransaction({
+      outputs: built.outputs,
+      fee: built.fee,
+      data: built.data,
+    });
+  }
+
+  /**
+   * Posts a ticket transfer (current owner). Uses the same nonce stream as gold transactions.
+   */
+  transferTicket({ ticketId, recipient, fee = 0, outputs = [] }) {
+    const built = TicketTransaction.createTransfer({
+      from: this.address,
+      nonce: this.nonce,
+      pubKey: this.keyPair.public,
+      ticketId,
+      recipient,
+      fee,
+      outputs,
+    });
+    const totalPayments = built.outputs.reduce((acc, { amount }) => acc + amount, 0) + built.fee;
+    if (totalPayments > this.availableGold) {
+      throw new Error(`Requested ${totalPayments}, but account only has ${this.availableGold}.`);
+    }
+    return this.postGenericTransaction({
+      outputs: built.outputs,
+      fee: built.fee,
+      data: built.data,
+    });
   }
 
   /**

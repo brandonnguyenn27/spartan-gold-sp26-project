@@ -116,6 +116,25 @@ module.exports = class Blockchain {
       });
     }
 
+    b.ticketRegistry = new Map();
+    if (o.ticketRegistry) {
+      o.ticketRegistry.forEach(([ticketId, owner]) => {
+        b.ticketRegistry.set(ticketId, owner);
+      });
+    }
+    b.eventMintCounts = new Map();
+    if (o.eventMintCounts) {
+      o.eventMintCounts.forEach(([eventId, count]) => {
+        b.eventMintCounts.set(eventId, count);
+      });
+    }
+    b.ticketMetadata = new Map();
+    if (o.ticketMetadata) {
+      o.ticketMetadata.forEach(([ticketId, meta]) => {
+        b.ticketMetadata.set(ticketId, meta);
+      });
+    }
+
     return b;
   }
 
@@ -176,6 +195,8 @@ module.exports = class Blockchain {
    *    if not overridden by the client.
    * @param {number} [cfg.confirmedDepth] - Number of blocks required after a block before it is
    *    considered confirmed.
+   * @param {Object|Map} [cfg.initialBalances] - Optional address-to-amount map merged into genesis
+   *    balances (e.g. TCP configs with empty clients list).
    *
    * @returns {Blockchain} - The blockchain configuration instance.
    */
@@ -204,6 +225,7 @@ module.exports = class Blockchain {
     clients = [],
     mnemonic,
     net,
+    initialBalances,
   }) {
 
     if (this.constructor.instance) {
@@ -286,6 +308,18 @@ module.exports = class Blockchain {
 
       this.initialBalances.set(client.address, clientCfg.amount);
     });
+
+    if (initialBalances) {
+      if (initialBalances instanceof Map) {
+        initialBalances.forEach((amt, address) => {
+          this.initialBalances.set(address, amt);
+        });
+      } else if (typeof initialBalances === 'object') {
+        Object.entries(initialBalances).forEach(([address, amt]) => {
+          this.initialBalances.set(address, Number(amt));
+        });
+      }
+    }
 
   }
 

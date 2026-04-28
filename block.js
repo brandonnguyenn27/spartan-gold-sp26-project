@@ -4,6 +4,12 @@ const Blockchain = require('./blockchain.js');
 
 const utils = require('./utils.js');
 
+const {
+  isTicketTx,
+  validateTicketTransaction,
+  applyTicketTransaction,
+} = require('./ticket-rules.js');
+
 /**
  * A block is a collection of transactions, with a hash connecting it
  * to a previous block.
@@ -29,6 +35,15 @@ module.exports = class Block {
     // Note that balances and nonces are NOT part of the serialized format.
     this.balances = prevBlock ? new Map(prevBlock.balances) : new Map();
     this.nextNonce = prevBlock ? new Map(prevBlock.nextNonce) : new Map();
+    this.ticketRegistry = prevBlock
+      ? new Map(prevBlock.ticketRegistry || [])
+      : new Map();
+    this.eventMintCounts = prevBlock
+      ? new Map(prevBlock.eventMintCounts || [])
+      : new Map();
+    this.ticketMetadata = prevBlock
+      ? new Map(prevBlock.ticketMetadata || [])
+      : new Map();
 
     if (prevBlock && prevBlock.rewardAddr) {
       // Add the previous block's rewards to the miner who found the proof.
@@ -137,6 +152,9 @@ module.exports = class Block {
       chainLength: this.chainLength,
       timestamp: this.timestamp,
     };
+    o.ticketRegistry = Array.from(this.ticketRegistry.entries());
+    o.ticketMetadata = Array.from(this.ticketMetadata.entries());
+    o.eventMintCounts = Array.from(this.eventMintCounts.entries());
     if (this.isGenesisBlock()) {
       // The genesis block does not contain a proof or transactions,
       // but is the only block than can specify balances.
@@ -194,6 +212,14 @@ module.exports = class Block {
       return false;
     }
 
+    if (isTicketTx(tx.data)) {
+      let check = validateTicketTransaction(this, tx);
+      if (!check.ok) {
+        if (client) client.log(`${check.reason} (${tx.id}).`);
+        return false;
+      }
+    }
+
     // Checking and updating nonce value.
     // This portion prevents replay attacks.
     let nonce = this.nextNonce.get(tx.from) || 0;
@@ -210,6 +236,10 @@ module.exports = class Block {
 
     // Adding the transaction to the block
     this.transactions.set(tx.id, tx);
+
+    if (isTicketTx(tx.data)) {
+      applyTicketTransaction(this, tx);
+    }
 
     // Taking gold from the sender
     let senderBalance = this.balanceOf(tx.from);
@@ -239,6 +269,9 @@ module.exports = class Block {
     // Setting balances to the previous block's balances.
     this.balances = new Map(prevBlock.balances);
     this.nextNonce = new Map(prevBlock.nextNonce);
+    this.ticketRegistry = new Map(prevBlock.ticketRegistry || []);
+    this.ticketMetadata = new Map(prevBlock.ticketMetadata || []);
+    this.eventMintCounts = new Map(prevBlock.eventMintCounts || []);
 
     // Adding coinbase reward for prevBlock.
     let winnerBalance = this.balanceOf(prevBlock.rewardAddr);
@@ -267,6 +300,10 @@ module.exports = class Block {
    */
   balanceOf(addr) {
     return this.balances.get(addr) || 0;
+  }
+
+  getTicketOwner(ticketId) {
+    return this.ticketRegistry.get(ticketId);
   }
 
   /**

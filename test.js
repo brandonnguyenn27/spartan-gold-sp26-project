@@ -9,16 +9,21 @@ const Blockchain = require('./blockchain.js');
 const Client = require('./client.js');
 const Miner = require('./miner.js');
 const Transaction = require('./transaction.js');
+const TicketTransaction = require('./ticket-transaction.js');
+const { registerOrganizer } = require('./ticket-organizers.js');
 
 // Generating keypair for multiple test cases, since key generation is slow.
 const kp = utils.generateKeypair();
 let addr = utils.calcAddress(kp.public);
 
+const kp2 = utils.generateKeypair();
+let addr2 = utils.calcAddress(kp2.public);
+
 // Adding a POW target that should be trivial to match.
 const EASY_POW_TARGET = BigInt("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
 
 // Setting blockchain configuration.  (Usually this would be done during the creation of the genesis block.)
-Blockchain.createInstance({ blockClass: Block, transactionClass: Transaction });
+Blockchain.createInstance({ blockClass: Block, transactionClass: TicketTransaction });
 
 describe('utils', () => {
   describe('.verifySignature', () => {
@@ -136,6 +141,217 @@ describe('Block', () => {
       assert.equal(b2.balances.get("ffff"), 100+20);
       assert.equal(b2.balances.get("face"), 99+40);
     });
+  });
+
+  describe('ticket registry', () => {
+    const eventId = 'test-event-1';
+
+    before(() => {
+      registerOrganizer(eventId, addr);
+    });
+
+    const expFar = 1000000;
+
+    it('accepts a mint and records the recipient', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: '1A', expiration: expFar },
+        mintNonce: 0,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      assert.isTrue(b.addTransaction(mint));
+      assert.equal(b.getTicketOwner(mint.data.ticketId), addr2);
+      assert.equal(b.eventMintCounts.get(eventId), 1);
+      assert.deepEqual(b.ticketMetadata.get(mint.data.ticketId), mint.data.metadata);
+    });
+
+    it('rejects duplicate ticket id mint', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: '1A', expiration: expFar },
+        mintNonce: 0,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      assert.isTrue(b.addTransaction(mint));
+      let dup = TicketTransaction.createMint({
+        from: addr,
+        nonce: 1,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: '1A', expiration: expFar },
+        mintNonce: 0,
+        recipient: addr2,
+      });
+      dup.sign(kp.private);
+      assert.isFalse(b.addTransaction(dup));
+    });
+
+    it('accepts transfer from owner and updates registry', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: 'X', expiration: expFar },
+        mintNonce: 10,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      assert.isTrue(b.addTransaction(mint));
+      let tid = mint.data.ticketId;
+      let xfer = TicketTransaction.createTransfer({
+        from: addr2,
+        nonce: 0,
+        pubKey: kp2.public,
+        ticketId: tid,
+        recipient: addr,
+        fee: 0,
+      });
+      xfer.sign(kp2.private);
+      assert.isTrue(b.addTransaction(xfer));
+      assert.equal(b.getTicketOwner(tid), addr);
+    });
+
+    it('rejects transfer when non-transferable', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: 'VIP', expiration: expFar, nonTransferable: true },
+        mintNonce: 11,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      assert.isTrue(b.addTransaction(mint));
+      let tid = mint.data.ticketId;
+      let xfer = TicketTransaction.createTransfer({
+        from: addr2,
+        nonce: 0,
+        pubKey: kp2.public,
+        ticketId: tid,
+        recipient: addr,
+      });
+      xfer.sign(kp2.private);
+      assert.isFalse(b.addTransaction(xfer));
+    });
+
+    it('rejects transfer after expiration block height', () => {
+      let b1 = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: 'EXP', expiration: 1 },
+        mintNonce: 12,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      assert.isTrue(b1.addTransaction(mint));
+      let tid = mint.data.ticketId;
+      let b2 = new Block(addr, b1);
+      let xfer = TicketTransaction.createTransfer({
+        from: addr2,
+        nonce: 0,
+        pubKey: kp2.public,
+        ticketId: tid,
+        recipient: addr,
+      });
+      xfer.sign(kp2.private);
+      assert.isFalse(b2.addTransaction(xfer));
+    });
+
+    it('rerun restores ticketRegistry and ticketMetadata after wipe', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: '2B', expiration: expFar },
+        mintNonce: 1,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      b.addTransaction(mint);
+      let tid = mint.data.ticketId;
+      b.ticketRegistry = new Map();
+      b.ticketMetadata = new Map();
+      b.eventMintCounts = new Map();
+      b.transactions = new Map([[mint.id, mint]]);
+      b.balances = new Map(prevBlock.balances);
+      b.nextNonce = new Map(prevBlock.nextNonce);
+      assert.isTrue(b.rerun(prevBlock));
+      assert.equal(b.getTicketOwner(tid), addr2);
+      assert.deepEqual(b.ticketMetadata.get(tid), mint.data.metadata);
+    });
+
+    it('serialize/deserialize preserves registry and metadata after rerun', () => {
+      let b = new Block(addr, prevBlock);
+      let mint = TicketTransaction.createMint({
+        from: addr,
+        nonce: 0,
+        pubKey: kp.public,
+        metadata: { eventId, seatInfo: '3C', expiration: expFar },
+        mintNonce: 2,
+        recipient: addr2,
+      });
+      mint.sign(kp.private);
+      b.addTransaction(mint);
+      let tid = mint.data.ticketId;
+      let o = JSON.parse(b.serialize());
+      let b2 = Blockchain.deserializeBlock(o);
+      assert.isTrue(b2.rerun(prevBlock));
+      assert.equal(b2.getTicketOwner(tid), addr2);
+      assert.deepEqual(b2.ticketMetadata.get(tid), mint.data.metadata);
+      assert.equal(b2.hashVal(), b.hashVal());
+    });
+  });
+});
+
+describe('TicketTransaction', () => {
+  it('has stable id for same mint fields after sign', () => {
+    let a = TicketTransaction.createMint({
+      from: addr,
+      nonce: 0,
+      pubKey: kp.public,
+      metadata: { eventId: 'e', seatInfo: 'z', expiration: 99 },
+      mintNonce: 3,
+      recipient: addr2,
+    });
+    a.sign(kp.private);
+    let b = TicketTransaction.createMint({
+      from: addr,
+      nonce: 0,
+      pubKey: kp.public,
+      metadata: { eventId: 'e', seatInfo: 'z', expiration: 99 },
+      mintNonce: 3,
+      recipient: addr2,
+    });
+    b.sign(kp.private);
+    assert.equal(a.id, b.id);
+  });
+
+  it('round-trips through Blockchain.makeTransaction', () => {
+    let tx = TicketTransaction.createMint({
+      from: addr,
+      nonce: 5,
+      pubKey: kp.public,
+      metadata: { eventId: 'e2', seatInfo: 's', expiration: 100 },
+      mintNonce: 0,
+      recipient: addr2,
+    });
+    tx.sign(kp.private);
+    let json = JSON.parse(JSON.stringify(tx));
+    let tx2 = Blockchain.makeTransaction(json);
+    assert.equal(tx2.id, tx.id);
+    assert.isTrue(tx2.validSignature());
   });
 });
 

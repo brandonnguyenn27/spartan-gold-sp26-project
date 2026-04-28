@@ -6,7 +6,7 @@ const FakeNet = require('./fake-net.js');
 const Blockchain = require('./blockchain.js');
 const Block = require('./block.js');
 const Miner = require('./miner.js');
-const Transaction = require('./transaction.js');
+const TicketTransaction = require('./ticket-transaction.js');
 
 /**
  * This extends the FakeNet class to actually communicate over the network.
@@ -125,11 +125,17 @@ let knownMiners = config.knownMiners || [];
 console.clear();
 
 let startingBalances = config.genesis ? config.genesis.startingBalances : {};
-let genesis = Blockchain.makeGenesis({
+if (Blockchain.hasInstance()) {
+  throw new Error('Blockchain already initialized; tcp-miner expects a fresh process.');
+}
+Blockchain.createInstance({
+  clients: [],
+  initialBalances: startingBalances,
   blockClass: Block,
-  transactionClass: Transaction,
-  startingBalances: startingBalances
+  transactionClass: TicketTransaction,
+  net: new FakeNet(),
 });
+let genesis = Blockchain.getInstance().genesis;
 
 console.log(`Starting ${name}`);
 let minnie = new TcpMiner({name: name, keyPair: config.keyPair, connection: config.connection, startingBlock: genesis});
