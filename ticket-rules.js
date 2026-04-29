@@ -1,6 +1,6 @@
 "use strict";
 
-const { isOrganizer } = require('./ticket-organizers.js');
+const { isOrganizer, getOrganizer } = require('./ticket-organizers.js');
 
 const TICKET_TX_TYPE = Object.freeze({
   MINT: 'MINT_TICKET',
@@ -32,6 +32,11 @@ function validateMetadataShape(m) {
   }
   if (m.nonTransferable !== undefined && typeof m.nonTransferable !== 'boolean') {
     return { ok: false, reason: 'metadata.nonTransferable must be boolean when present.' };
+  }
+  if (m.royaltyRate !== undefined) {
+    if (typeof m.royaltyRate !== 'number' || m.royaltyRate < 0 || m.royaltyRate > 1) {
+      return { ok: false, reason: 'metadata.royaltyRate must be a number between 0 and 1.' };
+    }
   }
   return { ok: true };
 }
@@ -98,6 +103,23 @@ function validateTransferTicket(block, tx) {
   }
   if (Number.isInteger(meta.expiration) && block.chainLength > meta.expiration) {
     return { ok: false, reason: 'Ticket has expired for transfers.' };
+  }
+  const rate = meta.royaltyRate || 0;
+  if (rate > 0) {
+    if (d.salePrice === undefined || typeof d.salePrice !== 'number' || d.salePrice < 0) {
+      return { ok: false, reason: 'Transfer requires data.salePrice when royaltyRate > 0.' };
+    }
+    const royaltyDue = Math.floor(d.salePrice * rate);
+    const organizerAddr = getOrganizer(meta.eventId);
+    if (!organizerAddr) {
+      return { ok: false, reason: `No organizer registered for event ${meta.eventId}.` };
+    }
+    const paidToOrganizer = (tx.outputs || []).reduce((sum, o) => {
+      return o.address === organizerAddr ? sum + o.amount : sum;
+    }, 0);
+    if (paidToOrganizer < royaltyDue) {
+      return { ok: false, reason: `Royalty underpaid: need ${royaltyDue}, got ${paidToOrganizer}.` };
+    }
   }
   return { ok: true };
 }

@@ -35,6 +35,7 @@ module.exports = class TicketTransaction extends Transaction {
         expiration: exp,
         ...(metadata.uri !== undefined ? { uri: String(metadata.uri) } : {}),
         ...(metadata.nonTransferable === true ? { nonTransferable: true } : {}),
+        ...(metadata.royaltyRate !== undefined ? { royaltyRate: metadata.royaltyRate } : {}),
       },
       recipient,
     };
@@ -44,12 +45,13 @@ module.exports = class TicketTransaction extends Transaction {
   /**
    * Current owner signs; data.recipient is new owner.
    */
-  static createTransfer({ from, nonce, pubKey, ticketId, recipient, fee = 0, outputs = [] }) {
+  static createTransfer({ from, nonce, pubKey, ticketId, recipient, fee = 0, outputs = [], salePrice }) {
     const data = {
       type: TICKET_TX_TYPE.TRANSFER,
       ticketId,
       recipient,
     };
+    if (salePrice !== undefined) data.salePrice = salePrice;
     return new TicketTransaction({ from, nonce, pubKey, outputs, fee, data });
   }
 };

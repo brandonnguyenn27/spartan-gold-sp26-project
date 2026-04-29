@@ -205,7 +205,7 @@ module.exports = class Client extends EventEmitter {
   /**
    * Posts a ticket transfer (current owner). Uses the same nonce stream as gold transactions.
    */
-  transferTicket({ ticketId, recipient, fee = 0, outputs = [] }) {
+  transferTicket({ ticketId, recipient, fee = 0, outputs = [], salePrice }) {
     const built = TicketTransaction.createTransfer({
       from: this.address,
       nonce: this.nonce,
@@ -214,6 +214,7 @@ module.exports = class Client extends EventEmitter {
       recipient,
       fee,
       outputs,
+      salePrice,
     });
     const totalPayments = built.outputs.reduce((acc, { amount }) => acc + amount, 0) + built.fee;
     if (totalPayments > this.availableGold) {
@@ -224,6 +225,12 @@ module.exports = class Client extends EventEmitter {
       fee: built.fee,
       data: built.data,
     });
+  }
+
+  transferTicketWithRoyalty({ ticketId, recipient, salePrice, royaltyRate, organizerAddress, fee = 0 }) {
+    const royaltyDue = Math.floor(salePrice * royaltyRate);
+    const outputs = royaltyDue > 0 ? [{ amount: royaltyDue, address: organizerAddress }] : [];
+    return this.transferTicket({ ticketId, recipient, fee, outputs, salePrice });
   }
 
   /**
